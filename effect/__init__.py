@@ -53,36 +53,6 @@ class Effect(object):
                       callbacks=self.callbacks + [(success, error)])
 
 
-def dispatch_method(intent, dispatcher):
-    """
-    Call intent.perform_effect with the given dispatcher and box.
-
-    Raise NoEffectHandlerError if there's no perform_effect method.
-    """
-    if hasattr(intent, 'perform_effect'):
-        return intent.perform_effect(dispatcher)
-    raise NoEffectHandlerError(intent)
-
-
-def default_dispatcher(intent, box):
-    """
-    This is the default dispatcher used by :func:`perform`.
-
-    If the intent has a 'perform_effect' method, invoke it with this
-    function as an argument. Its result will be passed to the first callback
-    on the effect.
-
-    If the perform_effect method can't be found, raise NoEffectHandlerError.
-
-    If you're using Twisted Deferreds, you should look at
-    :func:`effect.twisted.twisted_dispatcher`.
-    """
-    try:
-        box.succeed(dispatch_method(intent, default_dispatcher))
-    except:
-        box.fail(sys.exc_info())
-
-
 class _Box(object):
     """
     An object into which an effect dispatcher can place a result.
@@ -105,7 +75,7 @@ class _Box(object):
         self._bouncer.bounce(self._more, (True, result))
 
 
-def perform(effect, dispatcher=default_dispatcher):
+def perform(effect):
     """
     Perform an effect by invoking the dispatcher, and invoke callbacks
     associated with it.
