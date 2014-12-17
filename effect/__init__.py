@@ -70,8 +70,7 @@ class _Box(object):
 
     def fail(self, result):
         """
-        Indicate that the effect has failed to be met. result must be an
-        exc_info tuple.
+        Indicate that the effect has failed. result must be an exc_info tuple.
         """
         self._cont((True, result))
 
@@ -111,9 +110,7 @@ def perform(dispatcher, effect, recurse_effects=True):
         dispatcher(
             dispatcher,
             effect.intent,
-            _Box(partial(bouncer.bounce,
-                         lambda bouncer, result:
-                             _run_callbacks(bouncer, effect.callbacks, result))))
+            _Box(partial(_run_callbacks, bouncer, effect.callbacks)))
 
     trampoline(_perform, effect)
 
