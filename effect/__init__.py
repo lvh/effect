@@ -13,7 +13,7 @@ TODO: integration with other asynchronous libraries like asyncio, trollius,
 
 from __future__ import print_function
 
-from functools import wraps
+from functools import partial
 import sys
 
 from characteristic import attributes
@@ -59,25 +59,24 @@ class _Box(object):
     """
     An object into which an effect dispatcher can place a result.
     """
-    def __init__(self, bouncer, more):
-        self._bouncer = bouncer
-        self._more = more
+    def __init__(self, cont):
+        self._cont = cont
 
     def succeed(self, result):
         """
         Indicate that the effect has succeeded, and the result is available.
         """
-        self._bouncer.bounce(self._more, (False, result))
+        self._cont((False, result))
 
     def fail(self, result):
         """
         Indicate that the effect has failed to be met. result must be an
         exc_info tuple.
         """
-        self._bouncer.bounce(self._more, (True, result))
+        self._cont((True, result))
 
 
-def perform(dispatcher, effect, chain_effects=True):
+def perform(dispatcher, effect, recurse_effects=True):
     """
     Perform an effect by invoking the dispatcher, and invoke callbacks
     associated with it.
@@ -95,7 +94,7 @@ def perform(dispatcher, effect, chain_effects=True):
 
     def _run_callbacks(bouncer, chain, result):
         is_error, value = result
-        if chain_effects and type(value) is Effect:
+        if recurse_effects and type(value) is Effect:
             bouncer.bounce(
                 _perform,
                 Effect(value.intent, callbacks=value.callbacks + chain))
@@ -112,9 +111,9 @@ def perform(dispatcher, effect, chain_effects=True):
         dispatcher(
             dispatcher,
             effect.intent,
-            _Box(bouncer,
-                 lambda bouncer, result:
-                     _run_callbacks(bouncer, effect.callbacks, result)))
+            _Box(partial(bouncer.bounce,
+                         lambda bouncer, result:
+                             _run_callbacks(bouncer, effect.callbacks, result))))
 
     trampoline(_perform, effect)
 
@@ -176,7 +175,7 @@ class NotSynchronousError(Exception):
     """Performing an effect did not immediately return a value."""
 
 
-def sync_perform(dispatcher, effect, chain_effects=True):
+def sync_perform(dispatcher, effect, recurse_effects=True):
     """
     Perform an effect, and return its ultimate result. If the final result is
     an error, the exception will be raised. This is useful for testing, and
@@ -196,7 +195,7 @@ def sync_perform(dispatcher, effect, chain_effects=True):
         errors.append(x)
 
     effect = effect.on(success=success, error=error)
-    perform(dispatcher, effect, chain_effects=chain_effects)
+    perform(dispatcher, effect, recurse_effects=recurse_effects)
     if successes:
         return successes[0]
     elif errors:

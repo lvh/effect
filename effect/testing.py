@@ -92,7 +92,7 @@ def perform_stubs(dispatcher, effect):
             effect = sync_perform(
                 stub_dispatcher,
                 effect,
-                chain_effects=False)
+                recurse_effects=False)
         elif type(effect.intent) is ParallelEffects:
             if not all(isinstance(x.intent, StubIntent)
                        for x in effect.intent.effects):
