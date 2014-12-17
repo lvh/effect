@@ -84,9 +84,17 @@ def perform(dispatcher, effect, recurse_effects=True):
     is an object that lets the dispatcher specify the result (optionally
     asynchronously). See :func:`_Box.succeed` and :func:`_Box.fail`.
 
+    If a callback of an Effect ``a`` returns an Effect ``b``, ``b`` will be
+    performed immediately, and its result will be passed on to the next
+    callback.
+
     Note that this function does _not_ return the final result of the effect.
     You may instead want to use :func:`sync_perform` or
     :func:`effect.twisted.perform`.
+
+    :param bool recurse_effects: Specify whether effects which are returned
+    from callbacks should be automatically performed. If False, Effects
+    will be returned instead of performed.
 
     :returns: None
     """
