@@ -14,7 +14,7 @@ by using its default effect dispatcher, twisted_dispatcher.
 
 from __future__ import absolute_import
 
-from functools import partial
+from functools import partial, wraps
 
 import sys
 
@@ -24,7 +24,7 @@ from twisted.internet.task import deferLater
 
 from . import dispatch_method, perform as base_perform, Delay
 from effect import ParallelEffects
-from effect.dispatcher import Dispatcher
+from effect.dispatcher import TypeDispatcher
 
 
 def deferred_to_box(d, box):
@@ -35,11 +35,17 @@ def deferred_to_box(d, box):
 
 
 def deferred_performer(f):
-    """A decorator for writing dispatchers that return Deferreds."""
+    """
+    A decorator for performers that return Deferreds.
+
+    The returned function accepts an intent and a box, and the wrapped
+    function will be called with only the intent. The resulting
+    Deferred will be hooked up to the box.
+    """
     @wraps(f)
     def inner(intent, box, *args, **kwargs):
         try:
-            result = f(*args, **kwargs)
+            result = f(intent, *args, **kwargs)
         except:
             box.fail(sys.exc_info())
         else:
@@ -52,20 +58,19 @@ def deferred_performer(f):
 
 def make_twisted_dispatcher(reactor):
     """
-    Return a :obj:`Dispatcher` which supports some standard intents
+    Return a :obj:`TypeDispatcher` which supports some standard intents
     using Twisted mechanisms.
 
       - :obj:`ParallelIntent` with Twisted's :func:`gatherResults`
       - :obj:`Delay` with Twisted's ``IReactorTime.callLater``
     """
-    return make_dispatcher({
-        ParallelEffects: lambda i, b: perform_parallel(i, reactor),
-        Delay: lambda i, b: perform_delay(i, reactor),
+    return TypeDispatcher({
+        ParallelEffects: deferred_performer(partial(perform_parallel, reactor)),
+        Delay: deferred_performer(partial(perform_delay, reactor)),
         })
 
 
-@deferred_performer
-def perform_parallel(parallel, reactor):
+def perform_parallel(reactor, parallel):
     """
     Perform a ParallelEffects intent by using the Deferred gatherResults
     function.
@@ -75,7 +80,11 @@ def perform_parallel(parallel, reactor):
          for e in parallel.effects])
 
 
-def perform(reactor, effect, dispatcher):
+def perform_delay(reactor, delay):
+    return deferLater(reactor, delay.delay, lambda: None)
+
+
+def perform(effect, dispatcher):
     """
     Perform an effect, handling Deferred results and returning a Deferred
     that will fire with the effect's ultimate result.
@@ -84,13 +93,10 @@ def perform(reactor, effect, dispatcher):
     eff = effect.on(
         success=d.callback,
         error=lambda e: d.errback(exc_info_to_failure(e)))
-    base_perform(eff, dispatcher=partial(dispatcher, reactor))
+    base_perform(eff, dispatcher)
     return d
 
 
-@deferred_performer
-def perform_delay(delay, reactor):
-    return deferLater(reactor, delay.delay, lambda: None)
 
 
 def exc_info_to_failure(exc_info):

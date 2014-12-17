@@ -13,6 +13,7 @@ TODO: integration with other asynchronous libraries like asyncio, trollius,
 
 from __future__ import print_function
 
+from functools import wraps
 import sys
 
 from characteristic import attributes
@@ -20,6 +21,7 @@ from characteristic import attributes
 import six
 
 from .continuation import trampoline
+from .dispatcher import TypeDispatcher
 
 
 @attributes(['intent', 'callbacks'], apply_with_init=False)
@@ -36,7 +38,7 @@ class Effect(object):
     def __init__(self, intent, callbacks=None):
         """
         :param intent: An object that describes an effect to be
-            performed. Optionally has a perform_effect(dispatcher) method.
+            performed.
         """
         self.intent = intent
         if callbacks is None:
@@ -75,7 +77,7 @@ class _Box(object):
         self._bouncer.bounce(self._more, (True, result))
 
 
-def perform(effect):
+def perform(effect, dispatcher):
     """
     Perform an effect by invoking the dispatcher, and invoke callbacks
     associated with it.
@@ -129,12 +131,6 @@ def guard(f, *args, **kwargs):
         return (True, sys.exc_info())
 
 
-class NoEffectHandlerError(Exception):
-    """
-    No perform_effect method was found on the given intent.
-    """
-
-
 @attributes(['effects'], apply_with_init=False)
 class ParallelEffects(object):
     """
@@ -179,7 +175,7 @@ class NotSynchronousError(Exception):
     """Performing an effect did not immediately return a value."""
 
 
-def sync_perform(effect, dispatcher=default_dispatcher):
+def sync_perform(effect, dispatcher):
     """
     Perform an effect, and return its ultimate result. If the final result is
     an error, the exception will be raised. This is useful for testing, and
@@ -199,7 +195,7 @@ def sync_perform(effect, dispatcher=default_dispatcher):
         errors.append(x)
 
     effect = effect.on(success=success, error=error)
-    perform(effect, dispatcher=dispatcher)
+    perform(effect, dispatcher)
     if successes:
         return successes[0]
     elif errors:
@@ -209,14 +205,33 @@ def sync_perform(effect, dispatcher=default_dispatcher):
                                   % (effect,))
 
 
+def sync_performer(f):
+    """
+    A decorator for performers that return a value synchronously.
+
+    The returned function accepts an intent and a box, and the wrapped
+    function will be called with only the intent. The result of the
+    function will be provided as the result to the box.
+    """
+    @wraps(f)
+    def inner(intent, box):
+        try:
+            box.succeed(f(intent))
+        except:
+            box.fail(sys.exc_info())
+    return inner
+
+
 @attributes(['result'], apply_with_init=False)
 class ConstantIntent(object):
     """An intent that returns a pre-specified result when performed."""
     def __init__(self, result):
         self.result = result
 
-    def perform_effect(self, dispatcher):
-        return self.result
+
+@sync_performer
+def perform_constant(intent):
+    return intent.result
 
 
 @attributes(['exception'], apply_with_init=False)
@@ -225,8 +240,10 @@ class ErrorIntent(object):
     def __init__(self, exception):
         self.exception = exception
 
-    def perform_effect(self, dispatcher):
-        raise self.exception
+
+@sync_performer
+def perform_error(intent):
+    raise intent.exception
 
 
 @attributes(['func'], apply_with_init=False)
@@ -252,5 +269,14 @@ class FuncIntent(object):
     def __init__(self, func):
         self.func = func
 
-    def perform_effect(self, dispatcher):
-        return self.func()
+
+@sync_performer
+def perform_func(intent):
+    return intent.func()
+
+
+default_dispatcher = TypeDispatcher({
+    ConstantIntent: perform_constant,
+    ErrorIntent: perform_error,
+    FuncIntent: perform_func,
+})

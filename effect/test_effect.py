@@ -4,80 +4,60 @@ from testtools import TestCase
 from testtools.matchers import (MatchesListwise, Is, Equals, MatchesException,
                                 raises)
 
-from . import (Effect, NoEffectHandlerError, perform,
+from . import (Effect, perform,
                default_dispatcher, sync_perform, NotSynchronousError,
-               ConstantIntent)
-
-
-class SelfContainedIntent(object):
-    """An example effect intent which implements its own perform_effect."""
-
-    def perform_effect(self, dispatcher):
-        return ("Self-result", dispatcher)
+               ConstantIntent, ErrorIntent)
 
 
 class POPOIntent(object):
-    """
-    An example effect intent which doesn't implement its own
-    perform_effect.
-    """
+    """An example effect intent."""
 
 
-class ErrorIntent(object):
+class SyncPerformEffectTests(TestCase):
+    """Tests for :func:`perform_effect`."""
 
-    def perform_effect(self, dispatcher):
-        raise ValueError("oh dear")
+    def test_sync_perform_effect_function_dispatch(self):
+        """
+        sync_perform returns the result of the effect.
+        """
+        dispatcher = lambda i, box: box.succeed('foo')
+        intent = POPOIntent()
+        self.assertEqual(
+            sync_perform(Effect(intent), dispatcher),
+            'foo')
+
+    def test_sync_perform_async_effect(self):
+        """If an effect is asynchronous, sync_effect raises an error."""
+        self.assertRaises(
+            NotSynchronousError,
+            lambda: sync_perform(Effect(ConstantIntent("foo")),
+                                 lambda i, box: None))
+
+    def test_error_bubbles_up(self):
+        """
+        When effect performance fails, the exception is raised up through
+        sync_perform.
+        """
+        self.assertThat(
+            lambda: sync_perform(Effect(ErrorIntent(ValueError('oh dear'))), default_dispatcher),
+            raises(ValueError('oh dear')))
 
 
 class EffectPerformTests(TestCase):
     """Tests for perform."""
 
-    def test_perform_effect_method_dispatch(self):
+    def test_perform_with_callback(self):
         """
         perform
-        - invokes 'perform_effect' on the effect intent,
-        - passes the default dispatcher to it
-        - returns its result
+        - invokes the given dispatcher with the intent and a box
+        - uses the result given to the box as the argument of an
+          effect's callback
         """
-        self.assertThat(
-            sync_perform(Effect(SelfContainedIntent())),
-            MatchesListwise([
-                Equals("Self-result"),
-                Is(default_dispatcher)]))
-
-    def test_perform_effect_function_dispatch(self):
-        """
-        perform
-        - invokes the passed in dispatcher
-        - passes the effect intent to it
-        - returns its result
-        """
+        calls = []
         dispatcher = lambda i, box: box.succeed((i, 'dispatched'))
         intent = POPOIntent()
-        self.assertThat(
-            sync_perform(Effect(intent), dispatcher),
-            MatchesListwise([
-                Is(intent),
-                Equals("dispatched")]))
-
-    def test_error_bubbles_up(self):
-        """
-        When perform_effect raises an exception, it is raised up through
-        sync_perform.
-        """
-        self.assertThat(
-            lambda: sync_perform(Effect(ErrorIntent())),
-            raises(ValueError('oh dear')))
-
-    def test_no_effect_handler(self):
-        """
-        When no perform_effect method is on the intent object, the default
-        dispatcher raises :class:`NoEffectHandlerError`.
-        """
-        intent = object()
-        self.assertThat(
-            lambda: sync_perform(Effect(intent)),
-            raises(NoEffectHandlerError(intent)))
+        perform(Effect(intent).on(calls.append), dispatcher)
+        self.assertEqual(calls, [(intent, 'dispatched')])
 
     def test_effects_returning_effects(self):
         """
@@ -106,11 +86,6 @@ class EffectPerformTests(TestCase):
                                     ConstantIntent("foo"))))))),
             "foo")
 
-    def test_sync_perform_async_effect(self):
-        """If an effect is asynchronous, sync_effect raises an error."""
-        self.assertRaises(NotSynchronousError,
-                          lambda: sync_perform(Effect(ConstantIntent("foo")),
-                                               dispatcher=lambda i, box: None))
 
 
 class CallbackTests(TestCase):
