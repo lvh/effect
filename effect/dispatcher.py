@@ -21,12 +21,12 @@ class TypeDispatcher(object):
         """
         self.mapping = mapping
 
-    def __call__(self, intent, box):
+    def __call__(self, dispatcher, intent, box):
         t = type(intent)
         if t not in self.mapping:
             raise NoEffectHandlerError("No handler for %s found in %s"
                                        % (intent, self))
-        return self.mapping[type(intent)](intent, box)
+        return self.mapping[type(intent)](dispatcher, intent, box)
 
 
 @attributes(['dispatchers'], apply_with_init=False)
@@ -43,10 +43,10 @@ class ComposedDispatcher(object):
         """
         self.dispatchers = dispatchers
 
-    def __call__(self, intent, box):
+    def __call__(self, top_dispatcher, intent, box):
         for dispatcher in self.dispatchers:
             try:
-                return dispatcher(intent, box)
+                return dispatcher(top_dispatcher, intent, box)
             except NoEffectHandlerError:
                 pass
         else:

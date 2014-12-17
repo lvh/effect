@@ -4,11 +4,12 @@ Various functions for inspecting and restructuring effects.
 
 from __future__ import print_function
 
+from functools import partial
 import sys
 
 from characteristic import attributes
 
-from . import Effect, guard, ParallelEffects
+from . import Effect, guard, ParallelEffects, sync_performer, sync_perform
 
 import six
 
@@ -80,35 +81,18 @@ def fail_effect(effect, exception):
         return resolve_effect(effect, sys.exc_info(), is_error=True)
 
 
-def resolve_stub(effect):
+def perform_stubs(dispatcher, effect):
     """
-    Automatically perform an effect, if its intent is a StubIntent.
-
-    Note that resolve_stubs is preferred to this function, since it handles
-    chains of stub effects.
+    Perform an Effect only while the intents being performed are wrapped by
+    :class:`StubIntent`.
     """
-    if type(effect.intent) is StubIntent:
-        is_error, result = guard(effect.intent.intent.perform_effect, None)
-        return resolve_effect(effect, result, is_error=is_error)
-    else:
-        raise TypeError("resolve_stub can only resolve stubs, not %r"
-                        % (effect,))
-
-
-def resolve_stubs(effect):
-    """
-    Successively performs effects with resolve_stub until a non-Effect value,
-    or an Effect with a non-stub intent is returned, and return that value.
-
-    Parallel effects are supported by recursively invoking resolve_stubs on
-    the child effects, if all of their children are stubs.
-    """
-    if type(effect) is not Effect:
-        raise TypeError("effect must be Effect: %r" % (effect,))
-
+    stub_dispatcher = lambda d, i, b: dispatcher(dispatcher, i.intent, b)
     while type(effect) is Effect:
         if type(effect.intent) is StubIntent:
-            effect = resolve_stub(effect)
+            effect = sync_perform(
+                stub_dispatcher,
+                effect,
+                chain_effects=False)
         elif type(effect.intent) is ParallelEffects:
             if not all(isinstance(x.intent, StubIntent)
                        for x in effect.intent.effects):
@@ -116,8 +100,8 @@ def resolve_stubs(effect):
             else:
                 effect = resolve_effect(
                     effect,
-                    list(map(resolve_stubs, effect.intent.effects)))
+                    list(map(partial(sync_perform, stub_dispatcher),
+                             effect.intent.effects)))
         else:
             break
-
     return effect

@@ -8,8 +8,7 @@ does.
 
 The main useful thing you should be concerned with is the :func:`perform`
 function, which is like effect.perform except that it returns a Deferred with
-the final result, and also sets up Twisted/Deferred specific effect handling
-by using its default effect dispatcher, twisted_dispatcher.
+the final result.
 """
 
 from __future__ import absolute_import
@@ -22,7 +21,7 @@ from twisted.internet.defer import Deferred, maybeDeferred, gatherResults
 from twisted.python.failure import Failure
 from twisted.internet.task import deferLater
 
-from . import dispatch_method, perform as base_perform, Delay
+from . import perform as base_perform, Delay
 from effect import ParallelEffects
 from effect.dispatcher import TypeDispatcher
 
@@ -42,10 +41,9 @@ def deferred_performer(f):
     function will be called with only the intent. The resulting
     Deferred will be hooked up to the box.
     """
-    @wraps(f)
-    def inner(intent, box, *args, **kwargs):
+    def inner(dispatcher, intent, box):
         try:
-            result = f(intent, *args, **kwargs)
+            result = f(dispatcher, intent)
         except:
             box.fail(sys.exc_info())
         else:
@@ -65,26 +63,26 @@ def make_twisted_dispatcher(reactor):
       - :obj:`Delay` with Twisted's ``IReactorTime.callLater``
     """
     return TypeDispatcher({
-        ParallelEffects: deferred_performer(partial(perform_parallel, reactor)),
+        ParallelEffects: deferred_performer(perform_parallel),
         Delay: deferred_performer(partial(perform_delay, reactor)),
         })
 
 
-def perform_parallel(reactor, parallel):
+def perform_parallel(dispatcher, parallel):
     """
     Perform a ParallelEffects intent by using the Deferred gatherResults
     function.
     """
     return gatherResults(
-        [maybeDeferred(perform, reactor, e, dispatcher=twisted_dispatcher)
+        [maybeDeferred(perform, dispatcher, e)
          for e in parallel.effects])
 
 
-def perform_delay(reactor, delay):
+def perform_delay(reactor, dispatcher, delay):
     return deferLater(reactor, delay.delay, lambda: None)
 
 
-def perform(effect, dispatcher):
+def perform(dispatcher, effect):
     """
     Perform an effect, handling Deferred results and returning a Deferred
     that will fire with the effect's ultimate result.
@@ -93,7 +91,7 @@ def perform(effect, dispatcher):
     eff = effect.on(
         success=d.callback,
         error=lambda e: d.errback(exc_info_to_failure(e)))
-    base_perform(eff, dispatcher)
+    base_perform(dispatcher, eff)
     return d
 
 

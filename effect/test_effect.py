@@ -5,7 +5,7 @@ from testtools.matchers import (MatchesListwise, Is, Equals, MatchesException,
                                 raises)
 
 from . import (Effect, perform,
-               default_dispatcher, sync_perform, NotSynchronousError,
+               base_dispatcher, sync_perform, NotSynchronousError,
                ConstantIntent, ErrorIntent)
 
 
@@ -20,18 +20,18 @@ class SyncPerformEffectTests(TestCase):
         """
         sync_perform returns the result of the effect.
         """
-        dispatcher = lambda i, box: box.succeed('foo')
+        dispatcher = lambda d, i, box: box.succeed('foo')
         intent = POPOIntent()
         self.assertEqual(
-            sync_perform(Effect(intent), dispatcher),
+            sync_perform(dispatcher, Effect(intent)),
             'foo')
 
     def test_sync_perform_async_effect(self):
         """If an effect is asynchronous, sync_effect raises an error."""
         self.assertRaises(
             NotSynchronousError,
-            lambda: sync_perform(Effect(ConstantIntent("foo")),
-                                 lambda i, box: None))
+            lambda: sync_perform(lambda d, i, box: None,
+                                 Effect(ConstantIntent("foo"))))
 
     def test_error_bubbles_up(self):
         """
@@ -39,14 +39,14 @@ class SyncPerformEffectTests(TestCase):
         sync_perform.
         """
         self.assertThat(
-            lambda: sync_perform(Effect(ErrorIntent(ValueError('oh dear'))), default_dispatcher),
+            lambda: sync_perform(base_dispatcher, Effect(ErrorIntent(ValueError('oh dear')))),
             raises(ValueError('oh dear')))
 
 
 class EffectPerformTests(TestCase):
     """Tests for perform."""
 
-    def test_perform_with_callback(self):
+    def test_success_with_callback(self):
         """
         perform
         - invokes the given dispatcher with the intent and a box
@@ -54,9 +54,9 @@ class EffectPerformTests(TestCase):
           effect's callback
         """
         calls = []
-        dispatcher = lambda i, box: box.succeed((i, 'dispatched'))
+        dispatcher = lambda d, i, box: box.succeed((i, 'dispatched'))
         intent = POPOIntent()
-        perform(Effect(intent).on(calls.append), dispatcher)
+        perform(dispatcher, Effect(intent).on(calls.append))
         self.assertEqual(calls, [(intent, 'dispatched')])
 
     def test_effects_returning_effects(self):
@@ -67,6 +67,7 @@ class EffectPerformTests(TestCase):
         """
         self.assertEqual(
             sync_perform(
+                base_dispatcher,
                 Effect(ConstantIntent(Effect(ConstantIntent("foo"))))),
             "foo")
 
@@ -78,6 +79,7 @@ class EffectPerformTests(TestCase):
         """
         self.assertEqual(
             sync_perform(
+                base_dispatcher,
                 Effect(
                     ConstantIntent(
                         Effect(
@@ -87,26 +89,22 @@ class EffectPerformTests(TestCase):
             "foo")
 
 
-
 class CallbackTests(TestCase):
     """Tests for callbacks."""
 
     def test_success(self):
         """
         An Effect with callbacks
-        - performs the wrapped intent, passing the default dispatcher,
+        - performs the wrapped intent,
         - passes the result of that to the callback,
         - returns the result of the callback.
         """
-        self.assertThat(
+        self.assertEqual(
             sync_perform(
-                Effect(SelfContainedIntent())
+                base_dispatcher,
+                Effect(ConstantIntent('constant'))
                 .on(success=lambda x: (x, "amended!"))),
-            MatchesListwise([
-                MatchesListwise([
-                    Equals("Self-result"),
-                    Is(default_dispatcher)]),
-                Equals("amended!")]))
+            ('constant', 'amended!'))
 
     def test_success_propagates_effect_exception(self):
         """
@@ -116,7 +114,8 @@ class CallbackTests(TestCase):
         self.assertThat(
             lambda:
                 sync_perform(
-                    Effect(ErrorIntent()).on(success=lambda x: 'nope')),
+                    base_dispatcher,
+                    Effect(ErrorIntent(ValueError('oh dear'))).on(success=lambda x: 'nope')),
             raises(ValueError('oh dear')))
 
     def test_error_success(self):
@@ -127,13 +126,12 @@ class CallbackTests(TestCase):
 
         In other words, the error handler is skipped when there's no error.
         """
-        self.assertThat(
+        self.assertEqual(
             sync_perform(
-                Effect(SelfContainedIntent())
+                base_dispatcher,
+                Effect(ConstantIntent('constant'))
                 .on(error=lambda x: (x, "recovered!"))),
-            MatchesListwise([
-                Equals('Self-result'),
-                Is(default_dispatcher)]))
+            'constant')
 
     def test_error(self):
         """
@@ -144,7 +142,8 @@ class CallbackTests(TestCase):
         """
         self.assertThat(
             sync_perform(
-                Effect(ErrorIntent())
+                base_dispatcher,
+                Effect(ErrorIntent(ValueError('oh dear')))
                     .on(error=lambda x: ("handled", x))),
             MatchesListwise([
                 Equals('handled'),
@@ -158,7 +157,8 @@ class CallbackTests(TestCase):
         self.assertThat(
             lambda:
                 sync_perform(
-                    Effect(ErrorIntent())
+                    base_dispatcher,
+                    Effect(ErrorIntent(ValueError('oh dear')))
                         .on(error=lambda x: raise_(ValueError('eb error')))),
             raises(ValueError('eb error')))
 
@@ -169,7 +169,8 @@ class CallbackTests(TestCase):
         """
         self.assertThat(
             sync_perform(
-                Effect(ConstantIntent(Effect(ErrorIntent())))
+                base_dispatcher,
+                Effect(ConstantIntent(Effect(ErrorIntent(ValueError('oh dear')))))
                     .on(error=lambda x: x)),
             MatchesException(ValueError('oh dear')))
 
@@ -180,13 +181,17 @@ class CallbackTests(TestCase):
         """
         results = []
         boxes = []
-        dispatcher = lambda intent, box: boxes.append(box)
+        dispatcher = lambda d, intent, box: boxes.append(box)
         intent = POPOIntent()
         eff = Effect(intent).on(success=results.append)
-        perform(eff, dispatcher)
+        perform(dispatcher, eff)
         boxes[0].succeed('foo')
         self.assertEqual(results, ['foo'])
 
 
+# TODO: explicit tests for the dispatcher argument to the dispatcher.
+# TODO: tests for dispatcher.py (including ensuring that the top-level
+#       dispatcher is always passed trhough)
+        
 def raise_(e):
     raise e

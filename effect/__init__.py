@@ -77,7 +77,7 @@ class _Box(object):
         self._bouncer.bounce(self._more, (True, result))
 
 
-def perform(effect, dispatcher):
+def perform(dispatcher, effect, chain_effects=True):
     """
     Perform an effect by invoking the dispatcher, and invoke callbacks
     associated with it.
@@ -95,7 +95,7 @@ def perform(effect, dispatcher):
 
     def _run_callbacks(bouncer, chain, result):
         is_error, value = result
-        if type(value) is Effect:
+        if chain_effects and type(value) is Effect:
             bouncer.bounce(
                 _perform,
                 Effect(value.intent, callbacks=value.callbacks + chain))
@@ -110,6 +110,7 @@ def perform(effect, dispatcher):
 
     def _perform(bouncer, effect):
         dispatcher(
+            dispatcher,
             effect.intent,
             _Box(bouncer,
                  lambda bouncer, result:
@@ -175,7 +176,7 @@ class NotSynchronousError(Exception):
     """Performing an effect did not immediately return a value."""
 
 
-def sync_perform(effect, dispatcher):
+def sync_perform(dispatcher, effect, chain_effects=True):
     """
     Perform an effect, and return its ultimate result. If the final result is
     an error, the exception will be raised. This is useful for testing, and
@@ -195,7 +196,7 @@ def sync_perform(effect, dispatcher):
         errors.append(x)
 
     effect = effect.on(success=success, error=error)
-    perform(effect, dispatcher)
+    perform(dispatcher, effect, chain_effects=chain_effects)
     if successes:
         return successes[0]
     elif errors:
@@ -213,10 +214,9 @@ def sync_performer(f):
     function will be called with only the intent. The result of the
     function will be provided as the result to the box.
     """
-    @wraps(f)
-    def inner(intent, box):
+    def inner(dispatcher, intent, box):
         try:
-            box.succeed(f(intent))
+            box.succeed(f(dispatcher, intent))
         except:
             box.fail(sys.exc_info())
     return inner
@@ -230,7 +230,7 @@ class ConstantIntent(object):
 
 
 @sync_performer
-def perform_constant(intent):
+def perform_constant(dispatcher, intent):
     return intent.result
 
 
@@ -242,7 +242,7 @@ class ErrorIntent(object):
 
 
 @sync_performer
-def perform_error(intent):
+def perform_error(dispatcher, intent):
     raise intent.exception
 
 
@@ -271,11 +271,11 @@ class FuncIntent(object):
 
 
 @sync_performer
-def perform_func(intent):
+def perform_func(dispatcher, intent):
     return intent.func()
 
 
-default_dispatcher = TypeDispatcher({
+base_dispatcher = TypeDispatcher({
     ConstantIntent: perform_constant,
     ErrorIntent: perform_error,
     FuncIntent: perform_func,

@@ -11,9 +11,14 @@ from twisted.trial.unittest import SynchronousTestCase
 from twisted.internet.defer import succeed, fail
 from twisted.internet.task import Clock
 
-from . import Effect, parallel, ConstantIntent, Delay
-from .twisted import perform, twisted_dispatcher, exc_info_to_failure
-from .test_effect import SelfContainedIntent, ErrorIntent
+from . import Effect, parallel, ConstantIntent, Delay, ErrorIntent, base_dispatcher
+from . import perform as base_perform
+from .dispatcher import ComposedDispatcher
+from .twisted import (
+    deferred_performer,
+    exc_info_to_failure,
+    make_twisted_dispatcher,
+    perform)
 
 
 class ParallelTests(SynchronousTestCase):
@@ -24,7 +29,7 @@ class ParallelTests(SynchronousTestCase):
         same order that they were passed to parallel.
         """
         d = perform(
-            None,
+            ComposedDispatcher([make_twisted_dispatcher(None), base_dispatcher]),
             parallel([Effect(ConstantIntent('a')),
                       Effect(ConstantIntent('b'))]))
         self.assertEqual(self.successResultOf(d), ['a', 'b'])
@@ -40,9 +45,10 @@ class DelayTests(SynchronousTestCase):
         clock = Clock()
         called = []
         eff = Effect(Delay(1)).on(called.append)
-        perform(clock, eff)
+        d = perform(make_twisted_dispatcher(clock), eff)
         self.assertEqual(called, [])
         clock.advance(1)
+        self.assertEqual(self.successResultOf(d), None)
         self.assertEqual(called, [None])
 
 
@@ -50,13 +56,17 @@ class TwistedPerformTests(SynchronousTestCase, TestCase):
 
     skip = None  # Horrible hack to make testtools play with trial...
 
+    def setUp(self):
+        self.dispatcher = ComposedDispatcher([make_twisted_dispatcher(None),
+                                              base_dispatcher])
+
     def test_perform(self):
         """
         effect.twisted.perform returns a Deferred which fires with the ultimate
         result of the Effect.
         """
         e = Effect(ConstantIntent("foo"))
-        d = perform(None, e)
+        d = perform(self.dispatcher, e)
         self.assertEqual(self.successResultOf(d), 'foo')
 
     def test_perform_failure(self):
@@ -64,45 +74,32 @@ class TwistedPerformTests(SynchronousTestCase, TestCase):
         effect.twisted.perform fails the Deferred it returns if the ultimate
         result of the Effect is an exception.
         """
-        e = Effect(ErrorIntent())
-        d = perform(None, e)
+        e = Effect(ErrorIntent(ValueError('oh dear')))
+        d = perform(self.dispatcher, e)
         f = self.failureResultOf(d)
         self.assertEqual(f.type, ValueError)
         self.assertEqual(str(f.value), 'oh dear')
 
-    def test_dispatcher(self):
+    def test_deferred_performer(self):
         """
-        The twisted dispatcher passes the twisted dispatcher to the
-        handle_effect methods, in case the effects need to run more effects.
+        TODO: @deferred_performer
         """
-        e = Effect(SelfContainedIntent())
-        d = perform("reactor", e)
-        result = self.successResultOf(d)
-        # this is hella white-box
-        self.assertEqual(result[0], 'Self-result')
-        self.assertIs(type(result[1]), partial)
-        self.assertEqual(result[1].args, ('reactor',))
-        self.assertEqual(result[1].func, twisted_dispatcher)
-
-    def test_deferred_effect(self):
-        """
-        When an Effect handler returns a Deferred, the Deferred result is
-        passed to the first effect callback.
-        """
-        d = succeed('foo')
-        e = Effect(ConstantIntent(d)).on(success=lambda x: ('success', x))
-        result = perform(None, e)
+        deferred = succeed('foo')
+        e = Effect('meaningless').on(success=lambda x: ('success', x))
+        dispatcher = deferred_performer(lambda dispatcher, intent: deferred)
+        result = perform(dispatcher, e)
         self.assertEqual(self.successResultOf(result),
                          ('success', 'foo'))
 
-    def test_failing_deferred_effect(self):
+    def test_deferred_performer_failure(self):
         """
-        A failing Deferred returned from an effect causes error handlers to be
-        called with an exception tuple based on the failure.
+        A failing Deferred returned from a @deferred_performer causes error
+        handlers to be called with an exception tuple based on the failure.
         """
-        d = fail(ValueError('foo'))
-        e = Effect(ConstantIntent(d)).on(error=lambda e: ('error', e))
-        result = self.successResultOf(perform(None, e))
+        deferred = fail(ValueError('foo'))
+        e = Effect('meaningless').on(error=lambda e: ('error', e))
+        dispatcher = deferred_performer(lambda dispatcher, intent: deferred)
+        result = self.successResultOf(perform(dispatcher, e))
         self.assertThat(
             result,
             MatchesListwise([
