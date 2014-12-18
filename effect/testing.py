@@ -9,7 +9,7 @@ import sys
 
 from characteristic import attributes
 
-from . import Effect, guard, ParallelEffects, sync_performer, sync_perform
+from . import Effect, guard, ParallelEffects, sync_perform
 
 import six
 
@@ -85,23 +85,37 @@ def perform_stubs(dispatcher, effect):
     """
     Perform an Effect only while the intents being performed are wrapped by
     :class:`StubIntent`.
+
+    Effects of :obj:`ParallelIntent` are also performed, if all of their
+    child effects are of :obj:`StubIntents`.
     """
-    stub_dispatcher = lambda d, i, b: dispatcher(dispatcher, i.intent, b)
-    while type(effect) is Effect:
-        if type(effect.intent) is StubIntent:
-            effect = sync_perform(
+    def stub_dispatcher(i):
+        return lambda d, box: dispatcher(i.intent)(d, box)
+
+    # wow, pattern matching would be so cool.
+    # The actual cases are:
+    # - Effect(StubIntent(_)) = perform the effect
+    # - Effect(ParallelEffects([Effect(StubIntent(_))])) = perform the effect
+    # - _ = _
+    if type(effect) is not Effect:
+        return effect
+    elif type(effect.intent) is StubIntent:
+        return perform_stubs(
+            dispatcher,
+            sync_perform(
                 stub_dispatcher,
                 effect,
-                recurse_effects=False)
-        elif type(effect.intent) is ParallelEffects:
-            if not all(isinstance(x.intent, StubIntent)
-                       for x in effect.intent.effects):
-                break
-            else:
-                effect = resolve_effect(
-                    effect,
-                    list(map(partial(sync_perform, stub_dispatcher),
-                             effect.intent.effects)))
+                recurse_effects=False))
+    elif type(effect.intent) is ParallelEffects:
+        if not all(isinstance(x.intent, StubIntent)
+                   for x in effect.intent.effects):
+            return effect
         else:
-            break
-    return effect
+            return perform_stubs(
+                dispatcher,
+                resolve_effect(
+                    effect,
+                    list(map(partial(perform_stubs, dispatcher),
+                             effect.intent.effects))))
+    else:
+        return effect

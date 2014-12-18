@@ -75,14 +75,31 @@ class _Box(object):
         self._cont((True, result))
 
 
+class NoPerformerFoundError(Exception):
+    """Raised when a performer for an intent couldn't be found."""
+
+
 def perform(dispatcher, effect, recurse_effects=True):
     """
-    Perform an effect by invoking the dispatcher, and invoke callbacks
-    associated with it.
+    Perform an effect and invoke callbacks associated with it.
 
-    The dispatcher will be passed a "box" argument and the intent. The box
-    is an object that lets the dispatcher specify the result (optionally
-    asynchronously). See :func:`_Box.succeed` and :func:`_Box.fail`.
+    The dispatcher will be passed the intent, and is expected to return a
+    ``performer``, which is a function taking a dispatcher and a box and
+    returning nothing. See :module:`effect.dispatcher` for some implementations
+    of dispatchers, and :obj:`effect.base_dispatcher` for a dispatcher
+    supporting core intents like :obj:`ConstantIntent` and so forth.
+
+    The performer will then be invoked with two arguments: the dispatcher and
+    the box.
+
+    The dispatcher is passed so the performer can make recursive calls to
+    perform, if it needs to perform other effects (see :func:`parallel` and
+    :func:`perform_parallel` for an example of this).
+
+    The box is an object that lets the performer provide the result (optionally
+    asynchronously). See :func:`_Box.succeed` and :func:`_Box.fail`. Often
+    you can ignore the box by using a decorator like :func:`sync_performer` or
+    :func:`effect.twisted.deferred_performer`.
 
     If a callback of an Effect ``a`` returns an Effect ``b``, ``b`` will be
     performed immediately, and its result will be passed on to the next
@@ -93,8 +110,9 @@ def perform(dispatcher, effect, recurse_effects=True):
     :func:`effect.twisted.perform`.
 
     :param bool recurse_effects: Specify whether effects which are returned
-    from callbacks should be automatically performed. If False, Effects
-    will be returned instead of performed.
+        from callbacks should be automatically performed. If False, Effects
+        will be returned instead of performed. This is probably only useful for
+        testing purposes.
 
     :returns: None
     """
@@ -115,10 +133,10 @@ def perform(dispatcher, effect, recurse_effects=True):
         bouncer.bounce(_run_callbacks, chain, result)
 
     def _perform(bouncer, effect):
-        dispatcher(
-            dispatcher,
-            effect.intent,
-            _Box(partial(_run_callbacks, bouncer, effect.callbacks)))
+        performer = dispatcher(effect.intent)
+        if performer is None:
+            raise NoPerformerFoundError(effect.intent)
+        performer(dispatcher, _Box(partial(_run_callbacks, bouncer, effect.callbacks)))
 
     trampoline(_perform, effect)
 

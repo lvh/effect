@@ -6,7 +6,8 @@ from testtools.matchers import (MatchesListwise, Is, Equals, MatchesException,
 
 from . import (Effect, perform,
                base_dispatcher, sync_perform, NotSynchronousError,
-               ConstantIntent, ErrorIntent)
+               ConstantIntent, ErrorIntent,
+               NoPerformerFoundError)
 
 
 class POPOIntent(object):
@@ -20,7 +21,7 @@ class SyncPerformEffectTests(TestCase):
         """
         sync_perform returns the result of the effect.
         """
-        dispatcher = lambda d, i, box: box.succeed('foo')
+        dispatcher = lambda i: lambda d, box: box.succeed('foo')
         intent = POPOIntent()
         self.assertEqual(
             sync_perform(dispatcher, Effect(intent)),
@@ -30,7 +31,7 @@ class SyncPerformEffectTests(TestCase):
         """If an effect is asynchronous, sync_effect raises an error."""
         self.assertRaises(
             NotSynchronousError,
-            lambda: sync_perform(lambda d, i, box: None,
+            lambda: sync_perform(lambda i: lambda d, box: None,
                                  Effect(ConstantIntent("foo"))))
 
     def test_error_bubbles_up(self):
@@ -46,6 +47,15 @@ class SyncPerformEffectTests(TestCase):
 class EffectPerformTests(TestCase):
     """Tests for perform."""
 
+    def test_no_performer(self):
+        """
+        When a dispatcher returns None, :class:`NoPerformerFoundError` is raised.
+        """
+        dispatcher = lambda i: None
+        self.assertRaises(
+            NoPerformerFoundError,
+            perform, dispatcher, Effect(object()))
+
     def test_success_with_callback(self):
         """
         perform
@@ -54,7 +64,7 @@ class EffectPerformTests(TestCase):
           effect's callback
         """
         calls = []
-        dispatcher = lambda d, i, box: box.succeed((i, 'dispatched'))
+        dispatcher = lambda i: lambda d, box: box.succeed((i, 'dispatched'))
         intent = POPOIntent()
         perform(dispatcher, Effect(intent).on(calls.append))
         self.assertEqual(calls, [(intent, 'dispatched')])
@@ -181,7 +191,7 @@ class CallbackTests(TestCase):
         """
         results = []
         boxes = []
-        dispatcher = lambda d, intent, box: boxes.append(box)
+        dispatcher = lambda i: lambda d, box: boxes.append(box)
         intent = POPOIntent()
         eff = Effect(intent).on(success=results.append)
         perform(dispatcher, eff)

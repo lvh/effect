@@ -5,10 +5,6 @@ Dispatcher!
 from characteristic import attributes
 
 
-class NoEffectHandlerError(Exception):
-    """The dispatcher can't handle the given intent."""
-
-
 @attributes(['mapping'], apply_with_init=False)
 class TypeDispatcher(object):
     """
@@ -17,16 +13,15 @@ class TypeDispatcher(object):
     def __init__(self, mapping):
         """
         :param collections.Mapping mapping: A mapping of intent type to
-        functions taking an intent and a box which perform the intent.
+        functions taking a dispatcher, intent, and a box.
         """
         self.mapping = mapping
 
-    def __call__(self, dispatcher, intent, box):
+    def __call__(self, intent):
         t = type(intent)
-        if t not in self.mapping:
-            raise NoEffectHandlerError("No handler for %s found in %s"
-                                       % (intent, self))
-        return self.mapping[type(intent)](dispatcher, intent, box)
+        if type(intent) in self.mapping:
+            performer = self.mapping[type(intent)]
+            return lambda d, box: performer(d, intent, box)
 
 
 @attributes(['dispatchers'], apply_with_init=False)
@@ -43,12 +38,8 @@ class ComposedDispatcher(object):
         """
         self.dispatchers = dispatchers
 
-    def __call__(self, top_dispatcher, intent, box):
+    def __call__(self, intent):
         for dispatcher in self.dispatchers:
-            try:
-                return dispatcher(top_dispatcher, intent, box)
-            except NoEffectHandlerError:
-                pass
-        else:
-            raise NoEffectHandlerError("No handler for %r found in any of %r"
-                                       % (intent, self.dispatchers))
+            performer = dispatcher(intent)
+            if performer is not None:
+                return performer

@@ -86,7 +86,7 @@ class TwistedPerformTests(SynchronousTestCase, TestCase):
         """
         deferred = succeed('foo')
         e = Effect('meaningless').on(success=lambda x: ('success', x))
-        dispatcher = deferred_performer(lambda dispatcher, intent: deferred)
+        dispatcher = lambda i: lambda d, box: deferred_performer(lambda dispatcher, intent: deferred)(d, i, box)
         result = perform(dispatcher, e)
         self.assertEqual(self.successResultOf(result),
                          ('success', 'foo'))
@@ -98,7 +98,7 @@ class TwistedPerformTests(SynchronousTestCase, TestCase):
         """
         deferred = fail(ValueError('foo'))
         e = Effect('meaningless').on(error=lambda e: ('error', e))
-        dispatcher = deferred_performer(lambda dispatcher, intent: deferred)
+        dispatcher = lambda i: lambda d, box: deferred_performer(lambda dispatcher, intent: deferred)(d, i, box)
         result = self.successResultOf(perform(dispatcher, e))
         self.assertThat(
             result,
